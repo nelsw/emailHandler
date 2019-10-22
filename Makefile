@@ -1,42 +1,44 @@
-# https://docs.aws.amazon.com/cli/latest/reference/lambda/index.html
-# https://stedolan.github.io/jq/
-# https://mikefarah.github.io/yq/
-
-.PHONY: it bld zip test create update run
-
-# make it -e TEST=email-confirmation
-TEST=email-confirmation
-FN=
+NAME=
 ROLE=
 SGID=
 SNID1=
 SNID2=
 EVJ={ "": "" }
+EVNT=email-confirmation
 
-MJ=jq '. | {StatusCode: .statusCode, Headers: .headers, Body: .body|fromjson}'
+.PHONY: clean install test build invoke package update create
 
-it: test
+clean:
+	rm -f handler;
+	rm -f handler.zip;
 
-bld:
-	GOOS=linux GOARCH=amd64 go build -o handler
+install:
+	go get -t ./...
 
-zip: bld
+test:
+	go test -coverprofile cp.out ./...
+
+build:
+	GOOS=linux GOARCH=amd64 go build -o handler ./cmd/handler.go
+
+invoke: build
+	sam local invoke -e testdata/${EVNT}.json ${NAME} \
+	| jq '. | {StatusCode: .statusCode, Headers: .headers, Body: .body|fromjson}'
+
+package: build
 	zip handler.zip handler
 
-test: bld
-	sam local invoke -e testdata/${TEST}.json ${FN} | ${MJ}
+update: package
+	aws lambda update-function-code --function-name ${NAME} --zip-file fileb://./cmd/handler.zip;\
+	aws lambda update-function-configuration --function-name ${NAME} ;\
 
-update: zip
-	aws lambda update-function-code --function-name ${FN} --zip-file fileb://./handler.zip;\
-	aws lambda update-function-configuration --function-name ${FN} ;\
-
-create: bld
+create: build
 	aws lambda create-function \
-	--function-name ${FN} \
+	--function-name ${NAME} \
 	--role ${ROLE} \
 	--environment '{ "Variables": ${EVJ} }' \
 	--vpc-config '{ "SubnetIds": ["${SNID1}","${SNID2}"], "SecurityGroupIds": ["${SGID}"] }' \
-	--zip-file fileb://./handler.zip \
+	--zip-file fileb://./cmd/handler.zip \
 	--handler handler \
 	--runtime go1.x \
 	--memory-size 512 \
